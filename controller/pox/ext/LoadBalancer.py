@@ -3,11 +3,13 @@ from pox.core import core
 from pox.lib.addresses import IPAddr, EthAddr
 from pox.lib.packet.arp import arp
 from pox.lib.packet.ethernet import ethernet
+from pox.lib.recoco import Timer
+
 from pox.lib.util import dpidToStr
 
 log = core.getLogger()
 
-MAX_HOST = 3
+MAX_HOST = 6
 MIN_SWITCH = 1
 
 
@@ -35,8 +37,12 @@ class LoadBalancer:
         # id to count connections_list
         self.id = 1
 
+        self.time_period = 6
+
         # initializes fake MAC address for the gateway.
         self.fake_mac_gw = EthAddr("00:00:00:00:11:11")
+
+        #Timer(self.time_period, self._timer_func, recurring=True)
 
     def _handle_ConnectionUp(self, event):
         # Event handler method that is called when a new OpenFlow connection is established
@@ -49,6 +55,10 @@ class LoadBalancer:
 
         # adds the new connection to the list of connections
         self.connections_list.append(event.connection)
+
+        #install flow rule
+        self.install_flow_rule(event.dpid)
+
 
         # print("Connection Up: " + dpidToStr(event.dpid) + ", " + str(self.id))
 
@@ -96,32 +106,6 @@ class LoadBalancer:
                 connection.send(msg)
 
 
-                # ---- SERVERS SEARCH ----
-
-
-                arp_req = arp()
-                arp_req.hwsrc = self.fake_mac_gw
-                arp_req.opcode = arp.REQUEST
-                arp_req.protosrc = IPAddr("10.0.0.100") #protocol associated with fake mac addess
-
-
-                arp_req.protodst = IPAddr(f"10.1.0.1{h}")
-
-                # Constructs an Ethernet frame containing the ARP request packet
-                ether = ethernet()
-                ether.type = ethernet.ARP_TYPE
-                ether.dst = EthAddr.BROADCAST
-                ether.src = self.fake_mac_gw
-                ether.payload = arp_req
-
-                # Constructs an OpenFlow packet-out message
-                msg = of.ofp_packet_out()
-                msg.data = ether.pack()
-
-                # Adds action to flood the ARP message to all ports and sends the message
-                msg.actions.append(of.ofp_action_output(port=of.OFPP_ALL))
-                connection.send(msg)
-
 
     def _handle_PacketIn(self, event):
         # Extracts the parsed Ethernet frame from the incoming packet
@@ -137,9 +121,9 @@ class LoadBalancer:
 
                 ip_host = arp_message.protosrc
                 mac_host = arp_message.hwsrc
-                stringified_ip_host = str(ip_host).split(".")
+                lastnumber = int(str(ip_host)[-1]) #if is >= 4 => is a server
                 #case we have a server
-                if stringified_ip_host[1] == '1' and ip_host not in self.servers: 
+                if lastnumber >= 4 and ip_host not in self.servers: 
                     self.servers[ip_host] = {"switch": event.dpid, "port": event.port, "mac": mac_host}
 
                     # take the switch ID from linkDiscovery
@@ -165,7 +149,73 @@ class LoadBalancer:
                     
                     log.info(f"  ->  client {ip_host} is connected to switch {sw_id, sw_dpid} through switch port {port}")
         #should I compute this for any pair of nw_src and nw_dst?
-    
+
+    def _timer_func(self):
+        self.send_stat_req()
+
+    def send_stat_req(self):
+        connection = self.switch_connection
+        dpid = self.sw_id[1]
+        try:
+            msg = of.ofp_stats_request(body=of.ofp_flow_stats_request())
+            connection.send(msg)
+        except Exception as e:
+            print(f"Error sending stats request to {dpidToStr(dpid)}: {e}")
+
+    def _handle_FlowStatsReceived(self, event):
+        dpid = event.dpid
+        
+        # Dictionary to store total bytes for each unique (src, dst) pair in this current batch
+        # Key: (src_ip, dst_ip), Value: total_bytes
+        current_flow_totals = {}
+
+        # 1. Iterate through ALL flows and aggregate bytes by Src/Dst pair
+        for f in event.stats:
+            # Check if flow has IP addresses (avoids crashes on ARP/LLDP or wildcard flows)
+            if f.match.nw_src and f.match.nw_dst:
+                key = (f.match.nw_src, f.match.nw_dst)
+                
+                # Add to total (handles cases where you have multiple flows for same IPs but different Ports)
+                current_flow_totals[key] = current_flow_totals.get(key, 0) + f.byte_count
+        
+        # 2. Initialize history for this switch if it doesn't exist
+        # New Structure of self.prev_traffic: { dpid: { (src, dst): prev_bytes } }
+        if dpid not in self.prev_traffic:
+            self.prev_traffic[dpid] = {}
+        
+        switch_history = self.prev_traffic[dpid]
+        
+        print(f"--- Traffic Report for Switch {dpidToStr(dpid)} ---")
+
+        # 3. Calculate Rate for each pair found
+        for (src, dst), rec_bytes in current_flow_totals.items():
+            
+            # Retrieve previous byte count for this specific IP pair
+            prev_bytes = switch_history.get((src, dst), 0)
+            
+            # Handle potential counter resets
+            if rec_bytes < prev_bytes:
+                diff = rec_bytes 
+            else:
+                diff = rec_bytes - prev_bytes
+                
+            rate = diff / self.time_period
+            
+            # Update history for this specific pair
+            switch_history[(src, dst)] = rec_bytes
+            
+            # Output result
+            print(f"  {src} -> {dst} : {rate} bytes/sec")
+
+
+    def install_flow_rule(self, dpid):
+        # Install proactive rule to catch discovery probes
+        msg = of.ofp_flow_mod()
+        msg.priority = 50000
+        match = of.ofp_match(dl_src=self.fake_mac_gw)
+        msg.match = match
+        msg.actions = [of.ofp_action_output(port=of.OFPP_CONTROLLER)]
+        core.openflow.sendToDPID(dpid, msg)
 
 def launch():
     core.registerNew(LoadBalancer)
