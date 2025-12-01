@@ -29,8 +29,6 @@ class LoadBalancer:
 
     def _handle_PacketIn(self, event):
         # event handler that extracts the parsed packet from it (the event)
-        print("RICEVUTO PACCHETTO :)")
-        return
         packet = event.parsed
 
         # Checks if the packet is an IPv4 packet
@@ -42,7 +40,7 @@ class LoadBalancer:
             destination_ip = ip_packet.dstip
 
             # call routing method
-            #self.routing_flows(source_ip, destination_ip)
+            self.routing_flows(source_ip, destination_ip)
 
             # creates a new ofp_packet_out message
             msg = of.ofp_packet_out()
@@ -58,6 +56,44 @@ class LoadBalancer:
 
     def routing_flows(self, src_host_ip, dst_host_ip):
         # greedy -> vai al primo server meno occupato
+
+        #first handle clients
+        if src_host_ip in core.Discovery.clients:
+            # -> handle flow to servers
+            key = (src_host_ip, dst_host_ip)
+            if key in self.dict_flows.keys():
+                #flow already exists
+                pass
+            else:
+                #find server greedly
+                
+                self.dict_flows[key] = ?
+                #flow must be created
+                # initializes an OpenFlow flow modification message
+                msg = of.ofp_flow_mod()
+
+                # sets timeout to remove the flow
+                msg.idle_timeout = 25
+
+                # flow removed message will be sent when the rule expires
+                msg.flags = of.OFPFF_SEND_FLOW_REM
+
+                # condition for the flow rule
+                msg.match = of.ofp_match(dl_type=ethernet.IP_TYPE, nw_src=src_host_ip, nw_dst=dst_host_ip)
+
+                #there is only a switch
+                # set output action of the message to the port connected to the destination host
+                switch_dpid = core.Discovery.switch_dpid
+                switch_to_server_port = core.Discovery.servers[dst_host_ip]["port"]
+
+                msg.actions = [of.ofp_action_output(port=switch_to_server_port)]
+
+                # send the message to the destination switch
+                core.openflow.sendToDPID(switch_dpid, msg)
+        else:
+
+
+
         return
 
             
