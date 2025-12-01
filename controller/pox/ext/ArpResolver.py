@@ -23,7 +23,7 @@ class ARP:
         packet = event.parsed
 
         # checks if the packet type is ARP and if the ARP packet is an ARP request (not done for host discovery)
-        if packet.type == packet.ARP_TYPE and packet.payload.opcode == arp.REQUEST and packet.src != core.LoadBalancer.fake_mac_gw:
+        if packet.type == packet.ARP_TYPE and packet.payload.opcode == arp.REQUEST and packet.src != core.Discovery.fake_mac_gw:
 
             # extracts the ARP payload from the packet
             packet_ARP = packet.payload
@@ -45,7 +45,7 @@ class ARP:
             # This is True for ARP requests for hosts in the network
             # elif (packet.payload.protodst in core.HostDiscovery.hosts.keys()):
             #     self.handle_ARP_Request(event, packet_ARP, rule=False)
-            elif packet.payload.protodst in core.LoadBalancer.clients.keys() or packet.payload.protodst in core.LoadBalancer.servers.keys() :
+            elif packet.payload.protodst in core.Discovery.clients.keys() or packet.payload.protodst in core.Discovery.servers.keys() :
                 self.handle_ARP_Request(event, packet_ARP, rule=False)
             else:
                 print("PAOLO È FORTE A COD? ABBO!")
@@ -59,18 +59,18 @@ class ARP:
         arp_reply.opcode = arp.REPLY
 
         ip_is_server = False
-        print(f"DEBUG -> {core.LoadBalancer.servers}, {core.LoadBalancer.servers}")
+        print(f"DEBUG -> {core.Discovery.servers}, {core.Discovery.servers}")
         # sets the source MAC address (hwsrc) of the ARP reply
         if rule:
             # This is True for ARP request for the gateway
             arp_reply.hwsrc = self.gateway_MAC
                 
-        elif core.LoadBalancer.servers.get(packet_ARP.protodst) != None:
+        elif core.Discovery.servers.get(packet_ARP.protodst) != None:
             # This is True for ARP requests for hosts in the network
             ip_is_server = True
-            arp_reply.hwsrc = core.LoadBalancer.servers[packet_ARP.protodst]["mac"]
+            arp_reply.hwsrc = core.Discovery.servers[packet_ARP.protodst]["mac"]
         else:
-            arp_reply.hwsrc = core.LoadBalancer.clients[packet_ARP.protodst]["mac"]
+            arp_reply.hwsrc = core.Discovery.clients[packet_ARP.protodst]["mac"]
         
 
 
@@ -97,10 +97,10 @@ class ARP:
 
         elif ip_is_server:
             # This is True for ARP requests for servers in the network
-            ether.src = core.LoadBalancer.servers[packet_ARP.protodst]["mac"]
+            ether.src = core.Discovery.servers[packet_ARP.protodst]["mac"]
         else:
             # This is True for ARP requests for clients in the network
-            ether.src = core.LoadBalancer.clients[packet_ARP.protodst]["mac"]            
+            ether.src = core.Discovery.clients[packet_ARP.protodst]["mac"]            
 
 
         # sets the payload of the Ethernet frame to the ARP reply message
