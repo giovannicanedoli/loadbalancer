@@ -15,7 +15,7 @@ class ARP:
         core.openflow.addListeners(self)
         self.network_mask = "255.255.255.0"
         self.gateway_IP = IPAddr("10.0.0.1")
-        self.gateway_MAC = EthAddr("11:11:11:11:11:11")
+        self.gateway_MAC = EthAddr("00:00:00:00:00:01")
 
     def _handle_PacketIn(self, event):
         # This method handles ARP requests. By checking if they are directed to the gateway or hosts in the network, it installs flow rules and handles ARP replies.
@@ -48,7 +48,7 @@ class ARP:
             elif packet.payload.protodst in core.Discovery.clients.keys() or packet.payload.protodst in core.Discovery.servers.keys() :
                 self.handle_ARP_Request(event, packet_ARP, rule=False)
             else:
-                print("PAOLO È FORTE A COD? ABBO!")
+                print("Ip address not recognized!")
 
 
     def handle_ARP_Request(self, event, packet_ARP, rule):
@@ -59,7 +59,7 @@ class ARP:
         arp_reply.opcode = arp.REPLY
 
         ip_is_server = False
-        print(f"DEBUG -> {core.Discovery.servers}, {core.Discovery.servers}")
+        #print(f"DEBUG -> {core.Discovery.servers}, {core.Discovery.servers}")
         # sets the source MAC address (hwsrc) of the ARP reply
         if rule:
             # This is True for ARP request for the gateway
@@ -107,7 +107,7 @@ class ARP:
         ether.payload = arp_reply
 
         # DE-COMMENT TO SEE THE PRINT OF THE ARP REPLY
-        # log.info(f"ARP, Reply {arp_reply.protosrc} is-at {arp_reply.hwsrc}")
+        log.info(f"ARP, Reply {arp_reply.protosrc} is-at {arp_reply.hwsrc}")
 
         # create an OpenFlow packet-out message and send it
         msg = of.ofp_packet_out()

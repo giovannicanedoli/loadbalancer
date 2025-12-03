@@ -136,7 +136,7 @@ class Discovery:
                     sw_dpid = dpidToStr(self.servers[ip_host]["switch"])
                     port = self.servers[ip_host]["port"]
                     
-                    log.info(f"  ->  server {ip_host} is connected to switch {sw_id, sw_dpid} through switch port {port}")
+                    #log.info(f"  ->  server {ip_host} is connected to switch {sw_id, sw_dpid} through switch port {port}")
 
                 elif ip_host not in self.clients:
                     self.clients[ip_host] = {"switch": event.dpid, "port": event.port, "mac": mac_host}
@@ -149,8 +149,7 @@ class Discovery:
                     sw_dpid = dpidToStr(self.clients[ip_host]["switch"])
                     port = self.clients[ip_host]["port"]
                     
-                    log.info(f"  ->  client {ip_host} is connected to switch {sw_id, sw_dpid} through switch port {port}")
-        #should I compute this for any pair of nw_src and nw_dst?
+                    #log.info(f"  ->  client {ip_host} is connected to switch {sw_id, sw_dpid} through switch port {port}")
 
     def _timer_func(self):
         self.send_stat_req()
