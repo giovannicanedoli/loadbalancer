@@ -24,6 +24,9 @@ class LoadBalancer:
 
         self.time = 7
 
+        #Used to store the prev traffic on the switch
+        self.prev_flow_stats = {}
+
         # Timer to see flows situation in the network
         Timer(self.time, self.ask_FlowStats, recurring=True)
 
@@ -122,7 +125,7 @@ class LoadBalancer:
             log.warn(f"  ->  switch {switch_dpid} removed flow from {flow_match.nw_src} to {flow_match.nw_dst}")
             flow_key = (flow_match.nw_src, flow_match.nw_dst)
             if flow_key in self.dict_flows.keys():
-                self.dict_flows.pop(flow_key)
+                self.dict_flows[flow_key] = 0
 
     def extract_min_ratio_server(self):
         min_ratio = float('inf')
@@ -143,8 +146,7 @@ class LoadBalancer:
             if ratio < min_ratio:
                 min_ratio = ratio
                 best_server_ip = server_ip
-            print(f"[Server Analysis] IP: {server_ip} | Load: {current_server_load} | Ratio: {ratio:.4f}[{current_server_load}/{self.max_capacity}]")
-
+                print(f"[Server Analysis] IP: {server_ip} | Current Rate: {current_server_load:.2f} B/s | Ratio: {ratio:.4f}")
         if best_server_ip:
             return best_server_ip
         else:
@@ -180,12 +182,22 @@ class LoadBalancer:
                     self.flow_stats[key] = 0
                 
                 total_bytes = f.byte_count
+                prev_total_bytes = self.prev_flow_stats.get(key, 0)
 
-                self.flow_stats[key] = total_bytes
-                
+                if total_bytes < prev_total_bytes:
+                    byte_diff = total_bytes
+                else:
+                    byte_diff = total_bytes - prev_total_bytes
+
+                rate = byte_diff / self.time
+
+
+                # Update history
+                self.flow_stats[key] = rate
+
+                self.prev_flow_stats[key] = total_bytes
+
         # STATS PRINTING
-        print(f"Stats received from switch: {event.connection.dpid}, {self.flow_stats}")
-
         self.extract_min_ratio_server()
 
         
