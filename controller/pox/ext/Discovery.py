@@ -73,7 +73,7 @@ class Discovery:
 
     def search_host(self):
 
-        print("host discovering")
+        print("Discovering clients and servers")
 
         # calls the hostDiscovery method for each connection
         for connection in self.connections_list:

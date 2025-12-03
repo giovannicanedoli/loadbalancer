@@ -20,7 +20,7 @@ class LoadBalancer:
         # Store all flow stats
         self.flow_stats = {}
 
-        self.max_capacity = 1000 #bytes
+        self.max_capacity = 10000 #bytes
 
         self.time = 7
 
@@ -55,14 +55,12 @@ class LoadBalancer:
 
     def routing_flows(self, src_host_ip, dst_host_ip):
         # greedy -> vai al primo server meno occupato
-        print(src_host_ip, dst_host_ip)
         switch_dpid = core.Discovery.switch_dpid
         #first handle clients
         if src_host_ip in core.Discovery.clients.keys():
 
-            # 1. We need to pick the best server NOW
+            # pick best server
             chosen_server_ip = self.extract_min_ratio_server()
-            
             
             if chosen_server_ip is None:
                 print("No server available to handle request.")
@@ -73,27 +71,11 @@ class LoadBalancer:
             
             print(f"Routing Client {src_host_ip} -> Selected Server {chosen_server_ip}")
 
-            #flow must be created
-            # initializes an OpenFlow flow modification message
-            msg = of.ofp_flow_mod()
-        
-            # sets timeout to remove the flow
-            msg.idle_timeout = 25
-
-            # flow removed message will be sent when the rule expires
-            msg.flags = of.OFPFF_SEND_FLOW_REM
-
-            # condition for the flow rule
-            msg.match = of.ofp_match(dl_type=ethernet.IP_TYPE, nw_src=src_host_ip, nw_dst=dst_host_ip)
-
-            self.dict_flows[(src_host_ip, dst_host_ip)] = msg
-
-            # 2. Create the flow
             msg = of.ofp_flow_mod()
             msg.idle_timeout = 25
             msg.flags = of.OFPFF_SEND_FLOW_REM
             
-            # Match traffic from Client to the VIP (or Gateway)
+            # Match traffic from Client to the gateway
             msg.match = of.ofp_match(dl_type=ethernet.IP_TYPE, nw_src=src_host_ip, nw_dst=dst_host_ip)
             
             # set dest port, change destIP, destMAC
@@ -117,83 +99,64 @@ class LoadBalancer:
             msg.idle_timeout = 25
             msg.flags = of.OFPFF_SEND_FLOW_REM
             
-            # MATCH: Traffico dal Server Reale al Client
             msg.match = of.ofp_match(dl_type=ethernet.IP_TYPE, nw_src=src_host_ip, nw_dst=dst_host_ip)
             
-            # ACTIONS: Reverse NAT (SNAT)
-            # Il client deve vedere il pacchetto arrivare da 10.0.0.1, non da 10.0.0.2
+            #client must see the packet arrive from 10.0.0.1, not from the server's ip
             msg.actions.append(of.ofp_action_nw_addr.set_src(core.ARP.gateway_IP))
-            
-            # Opzionale ma consigliato: Setta il MAC sorgente con quello del Gateway
+            #set also the mac address to the gateway's one
             msg.actions.append(of.ofp_action_dl_addr.set_src(core.ARP.gateway_MAC))
             
-            # Invia al client
+            # send to the client's port
             msg.actions.append(of.ofp_action_output(port=client_port))
             
             core.openflow.sendToDPID(switch_dpid, msg)
 
-        return
-    
+        return 
 
     def _handle_FlowRemoved(self, event):
         # Checks if the flow removal is due to an idle timeout (it has been idle for too long)
         if event.idleTimeout:
             flow_match = event.ofp.match
-
             switch_dpid = core.Discovery.switch_dpid
-            
             # tell that the flow has been removed
-            #log.info(f"  ->  switch {switch_dpid} removed flow from {flow_match.nw_src} to {flow_match.nw_dst}")
-
-            # now it is needed to remove the flow from the network_occupation (total weight)
-            flow_id = (flow_match.nw_src, flow_match.nw_dst)
-
-            if flow_id in self.dict_flows.keys():
-
-                # removes the flow from the dict_flows dictionary
-                self.dict_flows.pop(flow_id)
-
+            log.warn(f"  ->  switch {switch_dpid} removed flow from {flow_match.nw_src} to {flow_match.nw_dst}")
+            flow_key = (flow_match.nw_src, flow_match.nw_dst)
+            if flow_key in self.dict_flows.keys():
+                self.dict_flows.pop(flow_key)
 
     def extract_min_ratio_server(self):
         min_ratio = float('inf')
         best_server_ip = None
 
-        # 1. Iterate through the KNOWN servers (not the flows)
-        #    This ensures we only evaluate valid servers.
+        #iterate through the servers
         for server_ip in core.Discovery.servers.keys():
-            
+
             current_server_load = 0
             
-            # 2. Calculate the total load for THIS specific server
-            #    We iterate stats to find traffic DESTINED to this server
+            #check if server is receiving flow
             for (src_ip, dst_ip), byte_count in self.flow_stats.items():
-                
-                # We compare strings to be safe (POX IP objects sometimes act tricky)
-                if str(dst_ip) == str(server_ip):
+                if str(src_ip) == str(server_ip):
                     current_server_load += byte_count
+            
 
-            # 3. Get the capacity
-            #    If you have per-server capacity in Discovery, use: 
-            #    capacity = core.Discovery.servers[server_ip].get('capacity', self.max_capacity)
-            capacity = self.max_capacity
-
-            # Avoid division by zero
-            ratio = current_server_load / capacity
-
-            print(f"   [Server Analysis] IP: {server_ip} | Load: {current_server_load} | Ratio: {ratio:.4f}")
-
-            # 4. Pick the winner
+            ratio = current_server_load / self.max_capacity
             if ratio < min_ratio:
                 min_ratio = ratio
                 best_server_ip = server_ip
+            print(f"[Server Analysis] IP: {server_ip} | Load: {current_server_load} | Ratio: {ratio:.4f}[{current_server_load}/{self.max_capacity}]")
 
         if best_server_ip:
-            #print(f"Selected Best Server: {best_server_ip} with Ratio: {min_ratio:.4f}")
             return best_server_ip
         else:
-            #print("No servers found or valid.")
+            print("No servers found or valid.")
             return None
 
+    def ask_FlowStats(self):
+
+        #  For each connection, it sends an OpenFlow statistics request message (flow statistics)
+        for connection in core.openflow.connections:
+            # This triggers the switch to respond with flow statistics.
+            connection.send(of.ofp_stats_request(body=of.ofp_flow_stats_request()))
 
     def _handle_FlowStatsReceived(self, event):
         # dictionary to store keys (src_ip, dest_ip) and values (total_bytes)
@@ -220,18 +183,12 @@ class LoadBalancer:
 
                 self.flow_stats[key] = total_bytes
                 
-        # --- Output/Logging ---
-        #print(f"Stats received from switch: {event.connection.dpid}, {self.flow_stats}")
-        
+        # STATS PRINTING
+        print(f"Stats received from switch: {event.connection.dpid}, {self.flow_stats}")
+
         self.extract_min_ratio_server()
 
-    def ask_FlowStats(self):
-
-        #  For each connection, it sends an OpenFlow statistics request message (flow statistics)
-        for connection in core.openflow.connections:
-            # This triggers the switch to respond with flow statistics.
-            connection.send(of.ofp_stats_request(body=of.ofp_flow_stats_request()))
-
+        
 
 def launch():
     core.registerNew(LoadBalancer)

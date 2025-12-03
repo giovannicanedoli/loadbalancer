@@ -107,7 +107,7 @@ class ARP:
         ether.payload = arp_reply
 
         # DE-COMMENT TO SEE THE PRINT OF THE ARP REPLY
-        log.info(f"ARP, Reply {arp_reply.protosrc} is-at {arp_reply.hwsrc}")
+        #log.info(f"ARP, Reply {arp_reply.protosrc} is-at {arp_reply.hwsrc}")
 
         # create an OpenFlow packet-out message and send it
         msg = of.ofp_packet_out()
