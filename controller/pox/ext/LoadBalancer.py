@@ -128,6 +128,10 @@ class LoadBalancer:
             flow_key = (flow_match.nw_src, flow_match.nw_dst)
             if flow_key in self.dict_flows.keys():
                 self.dict_flows[flow_key] = 0
+            if flow_key in self.flow_stats.keys():
+                self.flow_stats[flow_key] = 0
+            if flow_key in self.prev_flow_stats.keys():
+                self.prev_flow_stats[flow_key] = 0
 
     def extract_min_ratio_server(self):
         min_ratio = float('inf')
@@ -145,7 +149,7 @@ class LoadBalancer:
 
             ratio = current_server_load / self.max_capacity
             print(f"[Server Analysis] IP: {server_ip} | Current Rate: {current_server_load:.2f} B/s | Ratio: {ratio:.4f}")
-            if ratio > 1:
+            if ratio >= 1:
                 print(f"[Server Analysis] [WARNING!] Server {server_ip} is overloaded, I'm skipping it...")
                 continue
             if ratio < min_ratio:

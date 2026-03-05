@@ -1,0 +1,6 @@
+[x] far funzionare la flow rule
+[x] cambiare l'arpresolver escludendo il server come opzione come arprequest, il client deve pingare solo a 10.0.0.1 (in altre parole rimuovere la flag isserver, fare refactoring)
+[x] quando "scade" una flow rule settare il relativo flow a [(src, dest)] = 0 (fatto?)
+[x] testing invece del ping usare send.py e recv.py
+[ ] refactoring e rivedere i commenti
+[x] vedere il valore corretto per la capacità di carico dei server
