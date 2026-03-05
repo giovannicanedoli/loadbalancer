@@ -20,7 +20,7 @@ class LoadBalancer:
         # Store all flow stats
         self.flow_stats = {}
 
-        self.max_capacity = 10000 #bytes
+        self.max_capacity = 3000 #bytes
 
         self.time = 7
 
@@ -33,7 +33,6 @@ class LoadBalancer:
     def _handle_PacketIn(self, event):
         # event handler that extracts the parsed packet from it (the event)
         packet = event.parsed
-
         # Checks if the packet is an IPv4 packet
         if packet.find('ipv4'):
             # extracts the source and destination IP addresses from the IPv4 payload
@@ -57,7 +56,7 @@ class LoadBalancer:
             event.connection.send(msg)
 
     def routing_flows(self, src_host_ip, dst_host_ip):
-        # greedy -> vai al primo server meno occupato
+        # go to the first less occupied server
         switch_dpid = core.Discovery.switch_dpid
         #first handle clients
         if src_host_ip in core.Discovery.clients.keys():
@@ -98,6 +97,7 @@ class LoadBalancer:
         elif src_host_ip in core.Discovery.servers:
             # Simple forwarding back to client port
             client_port = core.Discovery.clients[dst_host_ip]["port"]
+            client_mac = core.Discovery.clients[dst_host_ip]["mac"]
             msg = of.ofp_flow_mod()
             msg.idle_timeout = 25
             msg.flags = of.OFPFF_SEND_FLOW_REM
@@ -105,9 +105,11 @@ class LoadBalancer:
             msg.match = of.ofp_match(dl_type=ethernet.IP_TYPE, nw_src=src_host_ip, nw_dst=dst_host_ip)
             
             #client must see the packet arrive from 10.0.0.1, not from the server's ip
-            msg.actions.append(of.ofp_action_nw_addr.set_src(core.ARP.gateway_IP))
+            msg.actions.append(of.ofp_action_nw_addr.set_src(core.ARP.client_gateway_IP))
             #set also the mac address to the gateway's one
-            msg.actions.append(of.ofp_action_dl_addr.set_src(core.ARP.gateway_MAC))
+            msg.actions.append(of.ofp_action_dl_addr.set_src(core.ARP.client_gateway_MAC))
+            #set destination mac to the client's actual mac (packet arrives with server gateway mac)
+            msg.actions.append(of.ofp_action_dl_addr.set_dst(client_mac))
             
             # send to the client's port
             msg.actions.append(of.ofp_action_output(port=client_port))
@@ -135,7 +137,6 @@ class LoadBalancer:
         for server_ip in core.Discovery.servers.keys():
 
             current_server_load = 0
-            
             #check if server is receiving flow
             for (src_ip, dst_ip), byte_count in self.flow_stats.items():
                 if str(src_ip) == str(server_ip):
@@ -143,10 +144,13 @@ class LoadBalancer:
             
 
             ratio = current_server_load / self.max_capacity
+            print(f"[Server Analysis] IP: {server_ip} | Current Rate: {current_server_load:.2f} B/s | Ratio: {ratio:.4f}")
+            if ratio > 1:
+                print(f"[Server Analysis] [WARNING!] Server {server_ip} is overloaded, I'm skipping it...")
+                continue
             if ratio < min_ratio:
                 min_ratio = ratio
                 best_server_ip = server_ip
-                print(f"[Server Analysis] IP: {server_ip} | Current Rate: {current_server_load:.2f} B/s | Ratio: {ratio:.4f}")
         if best_server_ip:
             return best_server_ip
         else:
@@ -197,7 +201,7 @@ class LoadBalancer:
 
                 self.prev_flow_stats[key] = total_bytes
 
-        # STATS PRINTING
+        # Stats printing
         self.extract_min_ratio_server()
 
         

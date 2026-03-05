@@ -9,8 +9,9 @@ from pox.lib.util import dpidToStr
 
 log = core.getLogger()
 
-MAX_HOST = 6
+MAX_HOST = 7
 MIN_SWITCH = 1
+DEBUG_CONNECTION_UP = False
 
 
 class Discovery:
@@ -40,8 +41,17 @@ class Discovery:
 
         self.time_period = 6
 
+        # initializes fake IP address for the client-side gateway.
+        self.fake_ip_gw = IPAddr("10.0.0.100")
+
+        # initializes fake IP address for the server-side gateway.
+        self.fake_ip_gw_server = IPAddr("10.0.1.100")
+
         # initializes fake MAC address for the gateway.
         self.fake_mac_gw = EthAddr("00:00:00:00:11:11")
+
+        # server subnet prefix for detection
+        self.server_subnet = "10.0.1."
 
         #Timer(self.time_period, self._timer_func, recurring=True)
 
@@ -61,8 +71,8 @@ class Discovery:
         #install flow rule
         self.install_flow_rule(event.dpid)
 
-
-        # print("Connection Up: " + dpidToStr(event.dpid) + ", " + str(self.id))
+        if DEBUG_CONNECTION_UP:
+            print("Connection Up: " + dpidToStr(event.dpid) + ", " + str(self.id))
 
         # run the search of the host, when all switches have been found
         if self.id >= MIN_SWITCH:
@@ -79,18 +89,16 @@ class Discovery:
         for connection in self.connections_list:
 
             # Iterates through a max number of hosts
-            for h in range(1, MAX_HOST + 1):
+            for number_of_host in range(1, MAX_HOST + 1):
                 
-                # ---- CLIENTS SEARCH ----
+                # ---- CLIENTS SEARCH (10.0.0.x subnet) ----
 
                 # Constructs an ARP request packet with a fake MAC address, and ARP request opcode
                 arp_req = arp()
                 arp_req.hwsrc = self.fake_mac_gw
                 arp_req.opcode = arp.REQUEST
-                arp_req.protosrc = IPAddr("10.0.0.100")
-
-
-                arp_req.protodst = IPAddr(f"10.0.0.1{h}")
+                arp_req.protosrc = self.fake_ip_gw
+                arp_req.protodst = IPAddr(f"10.0.0.1{number_of_host}")
 
                 # Constructs an Ethernet frame containing the ARP request packet
                 ether = ethernet()
@@ -106,6 +114,26 @@ class Discovery:
                 # Adds action to flood the ARP message to all ports and sends the message
                 msg.actions.append(of.ofp_action_output(port=of.OFPP_ALL))
                 connection.send(msg)
+
+                # ---- SERVERS SEARCH (10.0.1.x subnet) ----
+
+                arp_req_srv = arp()
+                arp_req_srv.hwsrc = self.fake_mac_gw
+                arp_req_srv.opcode = arp.REQUEST
+                arp_req_srv.protosrc = self.fake_ip_gw_server
+                arp_req_srv.protodst = IPAddr(f"10.0.1.1{number_of_host}")
+
+                ether_srv = ethernet()
+                ether_srv.type = ethernet.ARP_TYPE
+                ether_srv.dst = EthAddr.BROADCAST
+                ether_srv.src = self.fake_mac_gw
+                ether_srv.payload = arp_req_srv
+
+                msg_srv = of.ofp_packet_out()
+                msg_srv.data = ether_srv.pack()
+
+                msg_srv.actions.append(of.ofp_action_output(port=of.OFPP_ALL))
+                connection.send(msg_srv)
 
 
 
@@ -123,9 +151,10 @@ class Discovery:
 
                 ip_host = arp_message.protosrc
                 mac_host = arp_message.hwsrc
-                lastnumber = int(str(ip_host)[-1]) #if is >= 4 => is a server
+                # Detect servers by subnet (10.0.1.x = server, 10.0.0.x = client)
+                is_server = str(ip_host).startswith(self.server_subnet)
                 #case we have a server
-                if lastnumber >= 4 and ip_host not in self.servers: 
+                if is_server and ip_host not in self.servers: 
                     self.servers[ip_host] = {"switch": event.dpid, "port": event.port, "mac": mac_host}
 
                     # take the switch ID from linkDiscovery
@@ -138,7 +167,7 @@ class Discovery:
                     
                     #log.info(f"  ->  server {ip_host} is connected to switch {sw_id, sw_dpid} through switch port {port}")
 
-                elif ip_host not in self.clients:
+                elif not is_server and ip_host not in self.clients:
                     self.clients[ip_host] = {"switch": event.dpid, "port": event.port, "mac": mac_host}
 
                     # take the switch ID from linkDiscovery

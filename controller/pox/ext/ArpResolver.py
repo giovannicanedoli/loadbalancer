@@ -1,5 +1,3 @@
-import ipaddress
-
 import pox.openflow.libopenflow_01 as of
 from pox.core import core
 from pox.lib.addresses import EthAddr
@@ -13,9 +11,14 @@ log = core.getLogger()
 class ARP:
     def __init__(self) -> None:
         core.openflow.addListeners(self)
-        self.network_mask = "255.255.255.0"
-        self.gateway_IP = IPAddr("10.0.0.1")
-        self.gateway_MAC = EthAddr("00:00:00:00:00:01")
+
+        # Client-side gateway (10.0.0.0/24 subnet)
+        self.client_gateway_IP = IPAddr("10.0.0.1")
+        self.client_gateway_MAC = EthAddr("00:00:00:00:00:01")
+
+        # Server-side gateway (10.0.1.0/24 subnet)
+        self.server_gateway_IP = IPAddr("10.0.1.0")
+        self.server_gateway_MAC = EthAddr("00:00:00:00:00:02")
 
     def _handle_PacketIn(self, event):
         # This method handles ARP requests. By checking if they are directed to the gateway or hosts in the network, it installs flow rules and handles ARP replies.
@@ -31,48 +34,37 @@ class ARP:
             # DE-COMMENT TO SEE THE PRINT OF THE ARP REQUEST
             # log.info(f"ARP, Request who-has {packet_ARP.protodst} tell {packet_ARP.protosrc}")
 
-            # creates an IPv4 network object using the destination IP address and the network mask
-            ip_network = ipaddress.IPv4Network(f"{str(packet.payload.protodst)}/{self.network_mask}", strict=False)
 
-            # checks if the gateway is not in the same network as the destination IP address
-            # or if the destination IP address is the same as the gateway IP
-            # This is True for ARP request for the gateway
-            if ((ipaddress.IPv4Address(str(self.gateway_IP)) not in ip_network) or packet.payload.protodst == self.gateway_IP):
+            # Check if the ARP request is for the client-side gateway (10.0.0.1)
+            if packet.payload.protodst == self.client_gateway_IP:
+                self.handle_ARP_Request(event, packet_ARP, gateway_mac=self.client_gateway_MAC)
 
-                self.handle_ARP_Request(event, packet_ARP, rule=True)
+            # Check if the ARP request is for the server-side gateway (10.0.1.0)
+            elif packet.payload.protodst == self.server_gateway_IP:
+                self.handle_ARP_Request(event, packet_ARP, gateway_mac=self.server_gateway_MAC)
 
-            # checks if the destination IP address is in the keys of the core.HostDiscovery.hosts
-            # This is True for ARP requests for hosts in the network
-            # elif (packet.payload.protodst in core.HostDiscovery.hosts.keys()):
-            #     self.handle_ARP_Request(event, packet_ARP, rule=False)
-            elif packet.payload.protodst in core.Discovery.clients.keys() or packet.payload.protodst in core.Discovery.servers.keys() :
-                self.handle_ARP_Request(event, packet_ARP, rule=False)
+            # checks if the destination IP address is a known client in the network
+            elif packet.payload.protodst in core.Discovery.clients.keys():
+                self.handle_ARP_Request(event, packet_ARP, gateway_mac=None)
             else:
                 print("Ip address not recognized!")
 
 
-    def handle_ARP_Request(self, event, packet_ARP, rule):
+    def handle_ARP_Request(self, event, packet_ARP, gateway_mac):
         # This method generates an ARP reply message, encapsulates it in an Ethernet frame, and sends it out as a packet-out message to the switch
+        # gateway_mac is set when replying for a gateway IP, None when replying for a client
 
         # Creates ARP reply message and set the opcode to indicate that it's an ARP reply
         arp_reply = arp()
         arp_reply.opcode = arp.REPLY
 
-        ip_is_server = False
-        #print(f"DEBUG -> {core.Discovery.servers}, {core.Discovery.servers}")
         # sets the source MAC address (hwsrc) of the ARP reply
-        if rule:
-            # This is True for ARP request for the gateway
-            arp_reply.hwsrc = self.gateway_MAC
-                
-        elif core.Discovery.servers.get(packet_ARP.protodst) != None:
-            # This is True for ARP requests for hosts in the network
-            ip_is_server = True
-            arp_reply.hwsrc = core.Discovery.servers[packet_ARP.protodst]["mac"]
+        if gateway_mac is not None:
+            # This is for ARP requests for a gateway (client-side or server-side)
+            arp_reply.hwsrc = gateway_mac
         else:
+            # This is for ARP requests for clients in the network
             arp_reply.hwsrc = core.Discovery.clients[packet_ARP.protodst]["mac"]
-        
-
 
         # set the destination MAC address (hwdst) of the ARP reply to the source MAC address (hwsrc) of the received ARP request
         arp_reply.hwdst = packet_ARP.hwsrc
@@ -91,17 +83,12 @@ class ARP:
         ether.dst = packet_ARP.hwsrc
 
         # sets the source MAC address (src) of the Ethernet frame
-        if rule:
-            # This is True for ARP request for the gateway
-            ether.src = self.gateway_MAC
-
-        elif ip_is_server:
-            # This is True for ARP requests for servers in the network
-            ether.src = core.Discovery.servers[packet_ARP.protodst]["mac"]
+        if gateway_mac is not None:
+            # This is for ARP requests for a gateway (client-side or server-side)
+            ether.src = gateway_mac
         else:
-            # This is True for ARP requests for clients in the network
-            ether.src = core.Discovery.clients[packet_ARP.protodst]["mac"]            
-
+            # This is for ARP requests for clients in the network
+            ether.src = core.Discovery.clients[packet_ARP.protodst]["mac"]
 
         # sets the payload of the Ethernet frame to the ARP reply message
         ether.payload = arp_reply
