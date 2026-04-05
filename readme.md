@@ -2,7 +2,7 @@
 
 This project implements a Software-Defined Networking (SDN) Load Balancer using the **POX** controller and the **Kathará** network emulation tool. The load balancer dynamically distributes traffic from multiple clients to multiple servers based on their current load.
 
-## 🌐 Network Topology
+## Network Topology
 
 The network consists of:
 - **4 Clients**: Located in the `10.0.0.0/24` subnet.
@@ -10,9 +10,9 @@ The network consists of:
 - **1 OpenFlow Switch (s1)**: Connects all hosts and the controller.
 - **1 POX Controller**: Manages the switch and implements the load balancing logic.
 
-All clients communicate with a virtual gateway IP (`10.0.0.1`), which the controller transparently maps to one of the backend servers.
+All clients communicate with a virtual gateway IP (`10.0.0.1`) while all the servers communicate with a virtual gateway IP (`10.0.1.1`).
 
-## 🧠 Key Components
+## Key Components
 
 The controller logic is split into three main modules located in `controller/pox/ext/`:
 
@@ -31,7 +31,7 @@ The core logic of the project. It selects the server having the **least ratio**:
 - **Capacity**: Each server has a defined `max_capacity`. If a server is overloaded, it is skipped.
 - **Flow Installation**: Installs OpenFlow rules to rewrite packet headers (Destination IP/MAC for requests, Source IP/MAC for replies) to ensure seamless communication.
 
-## 🚀 How to Run
+## How to Run
 
 ### Prerequisites
 - [Kathará](https://www.kathara.org/) installed.
@@ -50,7 +50,7 @@ You can use the provided scripts in the `shared/` directory to test the load bal
 - **Servers**: Run `python3 /shared/server.py` on `server1`, `server2`, and `server3`.
 - **Clients**: Run `python3 /shared/client.py` on any client node to send traffic. Use the `-h` flag to see the available options.
 
-## 🛠 Project Structure
+## Project Structure
 - `controller/`: POX controller configuration and custom extensions.
 - `shared/`: Utility scripts for clients and servers.
 - `lab.conf`: Kathará network configuration.
